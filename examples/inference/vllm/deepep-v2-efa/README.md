@@ -34,9 +34,10 @@ make this work, and two of them are non-obvious integration fixes, not config:
    upgrade, not a container knob.
 3. **DeepEP-V2 source** = the
    [`amazon-contributing/DeepEP`](https://github.com/amazon-contributing/DeepEP) fork at a pinned SHA
-   (`97d8f9bc`) — the tree AWS points to for DeepEP-V2 on EFA and the fork the repo's canonical V2/GIN
+   (`51815ea2`, 2026-10-26; previously `97d8f9bc`, 2026-09-03) — the tree AWS points to for DeepEP-V2 on EFA and the fork the repo's canonical V2/GIN
    provisioner builds from its floating `main` ("the benchmark supports no other source"); the sibling
-   `vllm/deepep-v2-gdaki-efa` and `nvidia-dynamo/deepep-v2-efa` samples pin the same SHA. The fork
+   `vllm/deepep-v2-gdaki-efa` and `nvidia-dynamo/deepep-v2-efa` samples still pin `97d8f9bc` until this
+   pin set is measured. The fork
    carries the in-tree successors of deepseek [PR#612](https://github.com/deepseek-ai/DeepEP/pull/612)'s
    EFA work — the QP count clamps from `_C` runtime constants and the RDMA link rate is probed from
    sysfs — so no PR merge or local patch is applied, and no `EP_EFA_MAX_QPS` / `EP_EFA_RDMA_GBS` env
@@ -65,7 +66,14 @@ then-unmerged guard) remain in `benchmarks/` for reference.
 > a different front and substrate, so it does not show whether plain `vllm serve` at `14617c2b` on this
 > recipe serves — plain `vllm serve` at `14617c2b` and the post-review substrate (fork `97d8f9bc`, bundled
 > 1.21.1 plugin) are both unmeasured, and the queued 2-node re-validation (a serve at `14617c2b` vs
-> `e2f993dc4` on the shipped recipe) is what resolves it. The pin stays where it is until then.
+> `e2f993dc4` on the shipped recipe) is what resolves it.
+>
+> **Pin set on this branch (2026-10-26, NOT yet served):** vLLM `026d5af7f` (vLLM [#53008](https://github.com/vllm-project/vllm/pull/53008)'s
+> merge commit, the `ncclCommQueryProperties` overflow fix that NCCL >= 2.31 requires), `nvidia-nccl-cu13 2.32.3`,
+> `torch 2.13.0` (what that wheel declares; Layer 5b asserts it), and DeepEP fork `51815ea2` (carries the
+> 2026-10-13..10-26 GIN flush/hang/race fixes). The 2026-10-10 2-node run at `97d8f9bc` on this sample's image
+> failed in the first forward pass (GIN barrier timeouts, `Dispatch CPU wait exception`); the fork fixes target
+> that path. Build + symbol gates are the only verification until the 2-node serve is re-run.
 
 <!-- MD028: separate the two blockquotes so the blank line is not read as inside one quote -->
 
@@ -103,7 +111,7 @@ is compiled in-pod on first boot by `recipe/build_deepep.sh`, for the arch the n
 (`DEEPEP_ARCH_LIST`, default `9.0`). That is a design choice, not a sandbox limitation: `nvcc` needs no
 GPU, and the canonical `deepep-v2-benchmark` image compiles DeepEP inside `docker build` (see "Known
 limitations", divergence 3). The in-tree `Dockerfile` is the canonical, reviewable build. The published benchmark numbers were taken with it at
-the previous pin (`e2f993dc4`); the pin has since moved to `14617c2b` (vLLM #52632's merge commit), the
+the previous pin (`e2f993dc4`); the pin has since moved to `026d5af7f` (vLLM #53008's merge commit; torch 2.13.0, NCCL 2.32.3), the
 DeepEP source to the `amazon-contributing` fork and the GIN plugin to the installer-bundled build, and
 the tables have **not** been re-measured on the current substrate (build + symbol gates pass; the
 2-node E2E re-run is the outstanding step) — see `benchmarks/README.md`.
@@ -208,7 +216,7 @@ eager and non-eager tables + environment provenance.
      viable on EFA today; the canonical benchmark's defaults and NCCL build target a different point in
      that design space.
   2. **Coupling to the vLLM wheel's torch/NCCL ABI.** The DeepEP `_C.so` here is built in-pod against
-     the exact `torch 2.11+cu130` / `nvidia-nccl-cu13 2.30.4` the pinned vLLM wheel drags in (Dockerfile
+     the exact `torch 2.13.0+cu130` / `nvidia-nccl-cu13 2.32.3` the pinned vLLM wheel declares (Dockerfile
      Layer 5b re-pins it), so the toolchain is wheel-driven rather than a standalone NCCL build tree.
   3. **Where DeepEP is compiled.** The canonical `deepep.Dockerfile` builds DeepEP inside `docker build`
      for `9.0;10.0;10.3` in one image; this sample compiles the `_C.so` in-pod on first boot for the
@@ -217,7 +225,7 @@ eager and non-eager tables + environment provenance.
 
   The **DeepEP source** is no longer a divergence: since review round 4 this sample pins the same
   [`amazon-contributing/DeepEP`](https://github.com/amazon-contributing/DeepEP) fork the canonical
-  builds, at the immutable SHA `97d8f9bc` rather than the canonical's floating `main` (`97d8f9bc` includes the Blackwell `st.bulk` 64-bit-operand fix,
+  builds, at the immutable SHA `51815ea2` (previously `97d8f9bc`) rather than the canonical's floating `main` (`97d8f9bc` already includes the Blackwell `st.bulk` 64-bit-operand fix,
   [amazon-contributing/DeepEP#3](https://github.com/amazon-contributing/DeepEP/pull/3)). The
   `benchmarks/` numbers were measured on the previous `deepseek-ai/DeepEP@b306af06`+PR#612 tree on H200
   (`sm_90`) — see the provenance table there, and the Blackwell caveat under **Known limitations**

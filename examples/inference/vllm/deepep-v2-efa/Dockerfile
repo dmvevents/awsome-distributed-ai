@@ -53,10 +53,13 @@ RUN apt-get update \
 ENV PATH=/opt/amazon/efa/bin:/opt/amazon/openmpi/bin:$PATH
 ENV LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBRARY_PATH:-}
 
-# ---- Layer 3: torch cu13 stack (pinned; nccl-cu13 2.30.4 carries the GIN/LSA device symbols) ----
-ARG TORCH_SPEC="torch==2.11.0"                        # DeepEP _C.so links this exact ABI
+# ---- Layer 3: torch cu13 stack (pinned; nccl-cu13 2.32.3 carries the GIN/LSA device symbols) ----
+# torch 2.13.0 is what the pinned vLLM wheel declares (Requires-Dist: torch==2.13.0); pinning anything
+# else here is silently undone by the Layer-5 pip resolve (seen with 2.11.0: "Uninstalling torch-2.11.0+cu130").
+# Layer 5b asserts the version so the drift is loud.
+ARG TORCH_SPEC="torch==2.13.0"                        # DeepEP _C.so links this exact ABI; must match the vLLM wheel's Requires-Dist
 ARG TORCH_INDEX="https://download.pytorch.org/whl/cu130"
-ARG NVIDIA_NCCL_CU13="2.30.4"                         # 2.28.x lacks the GIN/LSA symbols the plugin needs
+ARG NVIDIA_NCCL_CU13="2.32.3"                         # >= 2.31.2 is the GIN floor in AWS gin-getting-started; 2.28.x lacks the GIN/LSA symbols. NCCL >= 2.31 needs the vLLM pin at/after #53008 (Layer 5).
 ARG NVSHMEM_CU13="3.6.5"
 RUN pip3 install --no-cache-dir --index-url "${TORCH_INDEX}" "${TORCH_SPEC}" \
     && pip3 install --no-cache-dir "nvidia-nccl-cu13==${NVIDIA_NCCL_CU13}" "nvidia-nvshmem-cu13==${NVSHMEM_CU13}" ninja
@@ -90,7 +93,7 @@ RUN git clone https://github.com/NVIDIA/gdrcopy.git /tmp/gdrcopy \
 # happens in-pod on first boot (recipe/build_deepep.sh — a design choice so the arch list
 # follows the node; see the header).
 COPY setup_deepep_v2_efa.sh /opt/setup_deepep_v2_efa.sh
-ARG DEEPEP_SHA=97d8f9bcc1be31e9036db2ab591ef9b9f4e38619   # amazon-contributing/DeepEP@main, 2026-09-03 — the SHA the sibling vllm/deepep-v2-gdaki-efa + nvidia-dynamo/deepep-v2-efa samples pin
+ARG DEEPEP_SHA=51815ea2a67444682f1c7b64268b5b7207e0c668   # amazon-contributing/DeepEP@main, 2026-10-26 — carries the 10-13..10-26 GIN flush/hang/race fixes (siblings still pin 97d8f9bc, 2026-09-03, until this set is measured)
 RUN chmod +x /opt/setup_deepep_v2_efa.sh \
     && DEEPEP_SHA=${DEEPEP_SHA} /opt/setup_deepep_v2_efa.sh
 ENV LD_LIBRARY_PATH=/opt/amazon/ofi-nccl/lib:${LD_LIBRARY_PATH}
@@ -106,7 +109,9 @@ ENV LD_LIBRARY_PATH=/opt/amazon/ofi-nccl/lib:${LD_LIBRARY_PATH}
 # commit also carries #47785 (shared-experts -1 sentinel fix, merged earlier). This is
 # the "bump the pin past #52632" edit the README describes. Was e2f993dc (PR#41183's
 # first deepep_v2 backend commit); wheel for the new SHA verified indexed 2026-08-25.
-ARG VLLM_SHA=14617c2b6c1257ac0d6c7b5e05b195ca30013827
+# 026d5af7f = vLLM #53008 merge commit (ncclCommQueryProperties heap-overflow fix for NCCL >= 2.31); required by the Layer-3 NCCL 2.32.3 pin.
+# wheel 0.28.1rc1.dev74+g026d5af7f, declares torch==2.13.0; verified indexed 2026-10-26.
+ARG VLLM_SHA=026d5af7f410e59e3910a4d66af1f691db29ca1d
 RUN WHEEL_HREF=$(curl -fsSL "https://wheels.vllm.ai/${VLLM_SHA}/vllm/" | grep -oE 'href="[^"]*manylinux[^"]*x86_64\.whl"' | head -1 | cut -d'"' -f2) \
     && { [ -n "$WHEEL_HREF" ] || { echo "FATAL: no x86_64 vllm wheel indexed for ${VLLM_SHA} (bad SHA, or nightly wheel garbage-collected upstream)"; exit 1; }; } \
     && pip3 install --no-cache-dir "https://wheels.vllm.ai/${VLLM_SHA}/$(basename "$WHEEL_HREF")" \
@@ -121,7 +126,8 @@ RUN pip3 install --no-cache-dir --no-deps --force-reinstall \
       "nvidia-nccl-cu13==${NVIDIA_NCCL_CU13}" "nvidia-nvshmem-cu13==${NVSHMEM_CU13}" \
     && NCCL_ROOT=$(python3 -c "import nvidia.nccl, pathlib; print(pathlib.Path(nvidia.nccl.__path__[0]))") \
     && grep -rq ncclGetLsaDevicePointer "$NCCL_ROOT/include/" \
-    && [ "$(nm -D "$NCCL_ROOT/lib/libnccl.so.2" | grep -c ncclGetLsaDevicePointer)" -ge 1 ]  # GIN/LSA symbols present (2.28.x lacks them)
+    && [ "$(nm -D "$NCCL_ROOT/lib/libnccl.so.2" | grep -c ncclGetLsaDevicePointer)" -ge 1 ] \
+    && python3 -c "import torch; assert torch.__version__ == '2.13.0+cu130', f'torch drifted: {torch.__version__} != 2.13.0+cu130'"  # GIN/LSA symbols present + the torch build the DeepEP _C.so will link
 
 # ---- Layer 6: the serve/build scripts (LAST — script iteration never invalidates heavy layers) ----
 COPY recipe/build_deepep.sh /opt/build_deepep.sh

@@ -76,7 +76,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: vllm
-        image: REPLACE_WITH_YOUR_REGISTRY/vllm-deepep-v2-efa:v4-20260927   # = ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} from setup/env_vars — bump on every rebuild (IfNotPresent caches by tag; this tag postdates the DeepEP source move to the amazon-contributing fork). Keep in sync with setup/env_vars.example.
+        image: REPLACE_WITH_YOUR_REGISTRY/vllm-deepep-v2-efa:v5-20261026   # = ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} from setup/env_vars — bump on every rebuild (IfNotPresent caches by tag; this tag postdates the DeepEP source move to the amazon-contributing fork). Keep in sync with setup/env_vars.example.
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c"]
         args:
